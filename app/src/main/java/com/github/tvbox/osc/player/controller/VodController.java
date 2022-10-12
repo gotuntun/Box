@@ -5,19 +5,28 @@ import static xyz.doikki.videoplayer.util.PlayerUtils.stringForTime;
 import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
 import android.annotation.SuppressLint;
+import android.annotation.TargetApi;
 import android.content.Context;
+import android.content.pm.ActivityInfo;
 import android.graphics.drawable.Drawable;
+import android.os.Build;
 import android.os.Message;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewAnimationUtils;
+import android.view.ViewGroup;
 import android.view.animation.DecelerateInterpolator;
+import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.SeekBar;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.annotation.NonNull;
+import androidx.recyclerview.widget.DiffUtil;
+import androidx.transition.TransitionManager;
 
 import com.chad.library.adapter.base.BaseQuickAdapter;
 import com.github.tvbox.osc.R;
@@ -27,10 +36,15 @@ import com.github.tvbox.osc.bean.ParseBean;
 import com.github.tvbox.osc.player.thirdparty.Kodi;
 import com.github.tvbox.osc.player.thirdparty.MXPlayer;
 import com.github.tvbox.osc.player.thirdparty.ReexPlayer;
+import com.github.tvbox.osc.subtitle.widget.SimpleSubtitleView;
+import com.github.tvbox.osc.ui.activity.HomeActivity;
 import com.github.tvbox.osc.ui.adapter.ParseAdapter;
+import com.github.tvbox.osc.ui.adapter.SelectDialogAdapter;
+import com.github.tvbox.osc.ui.dialog.SelectDialog;
 import com.github.tvbox.osc.util.FastClickCheckUtil;
 import com.github.tvbox.osc.util.HawkConfig;
 import com.github.tvbox.osc.util.PlayerHelper;
+import com.github.tvbox.osc.util.SubtitleHelper;
 import com.orhanobut.hawk.Hawk;
 import com.owen.tvrecyclerview.widget.TvRecyclerView;
 import com.owen.tvrecyclerview.widget.V7LinearLayoutManager;
@@ -40,6 +54,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Date;
 import java.util.List;
@@ -187,21 +202,38 @@ public class VodController extends BaseController {
         };
     }
 
-    SeekBar mSeekBar;
+    // top container
+    LinearLayout mTopHide;
+    LinearLayout mTopRoot;
+    TextView mPlayTitle;
+    TextView mPlayerResolution;
+
+    // pause container
+    FrameLayout mProgressTop;
+    ImageView mPauseIcon;
+    LinearLayout mTapSeek;
+
+    // progress container
+    LinearLayout mProgressRoot;
+    ImageView mProgressIcon;
+    TextView mProgressText;
+
+    // bottom container
+    LinearLayout mBottomRoot;
+    TextView mTime;
+    TextView mTimeEnd;
     TextView mCurrentTime;
+    SeekBar mSeekBar;
     TextView mTotalTime;
     boolean mIsDragging;
-    LinearLayout mProgressRoot;
-    TextView mProgressText;
-    ImageView mProgressIcon;
-    LinearLayout mTopRoot;
-    LinearLayout mTopHide;
-    LinearLayout mBottomRoot;
-    LinearLayout mParseRoot;
-    TvRecyclerView mGridView;
-    TextView mPlayTitle;
     LinearLayout mNextBtn;
     LinearLayout mPreBtn;
+    float mSpeed;
+    LinearLayout mPlayerFFwd;
+    ImageView mplayerFFImg;
+    Drawable dPlay = getResources().getDrawable(R.drawable.vod_play);
+    Drawable dFFwd = getResources().getDrawable(R.drawable.vod_ffwd);
+    LinearLayout mPlayerRetry;
     LinearLayout mPlayerScaleBtn;
     TextView mPlayerScaleTxt;
     LinearLayout mPlayerSpeedBtn;
@@ -209,25 +241,19 @@ public class VodController extends BaseController {
     LinearLayout mPlayerBtn;
     TextView mPlayerTxt;
     TextView mPlayerIJKBtn;
-    LinearLayout mPlayerRetry;
+    LinearLayout mSubtitleBtn;
+    public SimpleSubtitleView mSubtitleView;
+    LinearLayout mAudioTrackBtn;
     TextView mPlayerTimeStartBtn;
     TextView mPlayerTimeSkipBtn;
     TextView mPlayerTimeStepBtn;
-    TextView mPlayerResolution;
-    LinearLayout mAudioTrackBtn;
 
-    TextView mTime;
-    TextView mTimeEnd;
-
-    // takagen99 : Added for Fast Forward Button
-    LinearLayout mPlayerFFwd;
-    ImageView mplayerFFImg;
-    float mSpeed;
-    Drawable dPlay = getResources().getDrawable(R.drawable.vod_play);
-    Drawable dFFwd = getResources().getDrawable(R.drawable.vod_ffwd);
+    // parse container
+    LinearLayout mParseRoot;
+    TvRecyclerView mGridView;
 
     // takagen99 : To get system time
-    private Runnable mTimeRunnable = new Runnable() {
+    private final Runnable mTimeRunnable = new Runnable() {
         @Override
         public void run() {
             Date date = new Date();
@@ -240,23 +266,35 @@ public class VodController extends BaseController {
     @Override
     protected void initView() {
         super.initView();
-        mCurrentTime = findViewById(R.id.curr_time);
-        mTotalTime = findViewById(R.id.total_time);
+
+        // top container
+        mTopHide = findViewById(R.id.top_container_hide);
+        mTopRoot = findViewById(R.id.top_container);
         mPlayTitle = findViewById(R.id.tv_title_top);
-        mTime = findViewById(R.id.tv_time);
-        mTimeEnd = findViewById(R.id.tv_time_end);
-        mSeekBar = findViewById(R.id.seekBar);
+        mPlayerResolution = findViewById(R.id.tv_resolution);
+
+        // pause container
+        mProgressTop = findViewById(R.id.tv_pause_container);
+        mPauseIcon = findViewById(R.id.tv_pause_icon);
+        mTapSeek = findViewById(R.id.ll_ddtap);
+
+        // progress container
         mProgressRoot = findViewById(R.id.tv_progress_container);
         mProgressIcon = findViewById(R.id.tv_progress_icon);
         mProgressText = findViewById(R.id.tv_progress_text);
-        mTopRoot = findViewById(R.id.top_container);
-        mTopHide = findViewById(R.id.top_container_hide);
+
+        // bottom container
         mBottomRoot = findViewById(R.id.bottom_container);
-        mParseRoot = findViewById(R.id.parse_root);
-        mGridView = findViewById(R.id.mGridView);
-        mPlayerRetry = findViewById(R.id.play_retry);
+        mTime = findViewById(R.id.tv_time);
+        mTimeEnd = findViewById(R.id.tv_time_end);
+        mCurrentTime = findViewById(R.id.curr_time);
+        mSeekBar = findViewById(R.id.seekBar);
+        mTotalTime = findViewById(R.id.total_time);
         mNextBtn = findViewById(R.id.play_next);
         mPreBtn = findViewById(R.id.play_prev);
+        mPlayerFFwd = findViewById(R.id.play_ff);
+        mplayerFFImg = findViewById(R.id.play_ff_img);
+        mPlayerRetry = findViewById(R.id.play_retry);
         mPlayerScaleBtn = findViewById(R.id.play_scale);
         mPlayerScaleTxt = findViewById(R.id.play_scale_txt);
         mPlayerSpeedBtn = findViewById(R.id.play_speed);
@@ -264,16 +302,23 @@ public class VodController extends BaseController {
         mPlayerBtn = findViewById(R.id.play_player);
         mPlayerTxt = findViewById(R.id.play_player_txt);
         mPlayerIJKBtn = findViewById(R.id.play_ijk);
+        mSubtitleBtn = findViewById(R.id.play_subtitle);
+        mSubtitleView = findViewById(R.id.subtitle_view);
+        mAudioTrackBtn = findViewById(R.id.play_audio);
         mPlayerTimeStartBtn = findViewById(R.id.play_time_start);
         mPlayerTimeSkipBtn = findViewById(R.id.play_time_end);
         mPlayerTimeStepBtn = findViewById(R.id.play_time_step);
-        mPlayerFFwd = findViewById(R.id.play_ff);
-        mplayerFFImg = findViewById(R.id.play_ff_img);
-        mPlayerResolution = findViewById(R.id.tv_resolution);
-        mAudioTrackBtn = findViewById(R.id.audio_track_select);
 
+        // parse container
+        mParseRoot = findViewById(R.id.parse_root);
+        mGridView = findViewById(R.id.mGridView);
+
+        // initialize view
         mTopRoot.setVisibility(INVISIBLE);
         mBottomRoot.setVisibility(INVISIBLE);
+
+        // initialize subtitle
+        initSubtitleInfo();
 
         mGridView.setLayoutManager(new V7LinearLayoutManager(getContext(), 0, false));
         ParseAdapter parseAdapter = new ParseAdapter();
@@ -324,7 +369,43 @@ public class VodController extends BaseController {
                 mControlWrapper.startFadeOut();
             }
         });
-        // Replay from start
+        // Button : Play NEXT --------------------------------------------
+        mNextBtn.setOnClickListener(new OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                if (isPaused) {
+                    togglePlay();
+                } else {
+                    listener.playNext(false);
+                }
+                hideBottom();
+            }
+        });
+        // Button : Play PREV --------------------------------------------
+        mPreBtn.setOnClickListener(new OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                listener.playPre();
+                hideBottom();
+            }
+        });
+        // Button : Fast Forward (added by takagen99) ---------------------
+        mPlayerFFwd.setOnClickListener(new OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                if (mSpeed == 5.0f) {
+                    mSpeed = 1.0f;
+//                    mPlayerFFwd.setCompoundDrawablesWithIntrinsicBounds(dFFwd, null, null, null);
+                    mplayerFFImg.setImageDrawable(dFFwd);
+                } else {
+                    mSpeed = 5.0f;
+//                    mPlayerFFwd.setCompoundDrawablesWithIntrinsicBounds(dPlay, null, null, null);
+                    mplayerFFImg.setImageDrawable(dPlay);
+                }
+                setPlaySpeed(mSpeed);
+            }
+        });
+        // Button : REPLAY from start ------------------------------------
         mPlayerRetry.setOnClickListener(new OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -341,24 +422,7 @@ public class VodController extends BaseController {
                 return true;
             }
         });
-        mNextBtn.setOnClickListener(new OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                if (isPaused) {
-                    togglePlay();
-                } else {
-                    listener.playNext(false);
-                }
-                hideBottom();
-            }
-        });
-        mPreBtn.setOnClickListener(new OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                listener.playPre();
-                hideBottom();
-            }
-        });
+        // Button : SCALE video size ------------------------------------
         mPlayerScaleBtn.setOnClickListener(new OnClickListener() {
             @Override
             public void onClick(View view) {
@@ -378,6 +442,20 @@ public class VodController extends BaseController {
                 }
             }
         });
+        // takagen99 : Long Press to change orientation
+        mPlayerScaleBtn.setOnLongClickListener(new OnLongClickListener() {
+            @Override
+            public boolean onLongClick(View view) {
+                int checkOrientation = mActivity.getRequestedOrientation();
+                if (checkOrientation == ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE || checkOrientation == ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE || checkOrientation == ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE) {
+                    mActivity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT);
+                } else if (checkOrientation == ActivityInfo.SCREEN_ORIENTATION_PORTRAIT || checkOrientation == ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT || checkOrientation == ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT) {
+                    mActivity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+                }
+                return true;
+            }
+        });
+        // Button : SPEED of video --------------------------------------
         mPlayerSpeedBtn.setOnClickListener(new OnClickListener() {
             @Override
             public void onClick(View view) {
@@ -386,11 +464,12 @@ public class VodController extends BaseController {
                 try {
                     float speed = (float) mPlayerConfig.getDouble("sp");
                     speed += 0.25f;
-                    if (speed > 3)
-                        speed = 0.5f;
-                    if (speed == 1)
+                    if (speed == 1) {
 //                        mPlayerFFwd.setCompoundDrawablesWithIntrinsicBounds(dFFwd, null, null, null);
                         mplayerFFImg.setImageDrawable(dFFwd);
+                    } else if (speed > 3) {
+                        speed = 0.5f;
+                    }
                     mPlayerConfig.put("sp", speed);
                     updatePlayerCfgView();
                     listener.updatePlayerCfg();
@@ -417,38 +496,97 @@ public class VodController extends BaseController {
                 return true;
             }
         });
+        // Button : CHANGE player type ------------------------------------
+//        mPlayerBtn.setOnClickListener(new OnClickListener() {
+//            @Override
+//            public void onClick(View view) {
+//                try {
+//                    int playerType = mPlayerConfig.getInt("pl");
+//                    boolean playerVail = false;
+//                    do {
+//                        playerType++;
+//                        if (playerType <= 2) {
+//                            playerVail = true;
+//                        } else if (playerType == 10) {
+//                            playerVail = mxPlayerExist;
+//                        } else if (playerType == 11) {
+//                            playerVail = reexPlayerExist;
+//                        } else if (playerType == 12) {
+//                            playerVail = KodiExist;
+//                        } else if (playerType > 12) {
+//                            playerType = 0;
+//                            playerVail = true;
+//                        }
+//                    } while (!playerVail);
+//                    mPlayerConfig.put("pl", playerType);
+//                    updatePlayerCfgView();
+//                    listener.updatePlayerCfg();
+//                    listener.replay(false);
+//                    // hideBottom();
+//                } catch (JSONException e) {
+//                    e.printStackTrace();
+//                }
+//                mPlayerBtn.requestFocus();
+//            }
+//        });
         mPlayerBtn.setOnClickListener(new OnClickListener() {
             @Override
             public void onClick(View view) {
+                FastClickCheckUtil.check(view);
                 try {
-                    int playerType = mPlayerConfig.getInt("pl");
-                    boolean playerVail = false;
-                    do {
-                        playerType++;
-                        if (playerType <= 2) {
-                            playerVail = true;
-                        } else if (playerType == 10) {
-                            playerVail = mxPlayerExist;
-                        } else if (playerType == 11) {
-                            playerVail = reexPlayerExist;
-                        } else if (playerType == 12) {
-                            playerVail = KodiExist;
-                        } else if (playerType > 12) {
-                            playerType = 0;
-                            playerVail = true;
+                    int defaultPos = mPlayerConfig.getInt("pl");
+                    ArrayList<Integer> players = new ArrayList<>();
+                    players.add(0);
+                    players.add(1);
+                    players.add(2);
+                    if (mxPlayerExist) {
+                        players.add(10);
+                    }
+                    if (reexPlayerExist) {
+                        players.add(11);
+                    }
+                    if (KodiExist) {
+                        players.add(12);
+                    }
+                    SelectDialog<Integer> dialog = new SelectDialog<>(mActivity);
+                    dialog.setTip(HomeActivity.getRes().getString(R.string.dia_player));
+                    dialog.setAdapter(new SelectDialogAdapter.SelectDialogInterface<Integer>() {
+                        @Override
+                        public void click(Integer value, int pos) {
+                            try {
+                                dialog.cancel();
+                                int thisPlayType = players.get(pos);
+                                mPlayerConfig.put("pl", thisPlayType);
+                                updatePlayerCfgView();
+                                listener.updatePlayerCfg();
+                                listener.replay(false);
+                            } catch (Exception e) {
+                                e.printStackTrace();
+                            }
                         }
-                    } while (!playerVail);
-                    mPlayerConfig.put("pl", playerType);
-                    updatePlayerCfgView();
-                    listener.updatePlayerCfg();
-                    listener.replay(false);
-                    // hideBottom();
+
+                        @Override
+                        public String getDisplay(Integer val) {
+                            return PlayerHelper.getPlayerName(val);
+                        }
+                    }, new DiffUtil.ItemCallback<Integer>() {
+                        @Override
+                        public boolean areItemsTheSame(@NonNull @NotNull Integer oldItem, @NonNull @NotNull Integer newItem) {
+                            return oldItem.intValue() == newItem.intValue();
+                        }
+
+                        @Override
+                        public boolean areContentsTheSame(@NonNull @NotNull Integer oldItem, @NonNull @NotNull Integer newItem) {
+                            return oldItem.intValue() == newItem.intValue();
+                        }
+                    }, players, defaultPos);
+                    dialog.show();
                 } catch (JSONException e) {
                     e.printStackTrace();
                 }
-                mPlayerBtn.requestFocus();
             }
         });
+        // Button : IJK select software or hardware decoding --------------------
         mPlayerIJKBtn.setOnClickListener(new OnClickListener() {
             @Override
             public void onClick(View view) {
@@ -476,6 +614,35 @@ public class VodController extends BaseController {
                 mPlayerIJKBtn.requestFocus();
             }
         });
+        // Button : Subtitle selection ----------------------------------------
+        mSubtitleBtn.setOnClickListener(new OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                FastClickCheckUtil.check(view);
+                listener.selectSubtitle();
+            }
+        });
+        mSubtitleBtn.setOnLongClickListener(new OnLongClickListener() {
+            @Override
+            public boolean onLongClick(View view) {
+                mSubtitleView.setVisibility(View.GONE);
+                mSubtitleView.destroy();
+                mSubtitleView.clearSubtitleCache();
+                mSubtitleView.isInternal = false;
+                hideBottom();
+                Toast.makeText(getContext(), HomeActivity.getRes().getString(R.string.vod_sub_off), Toast.LENGTH_SHORT).show();
+                return true;
+            }
+        });
+        // Button : AUDIO track selection --------------------------------------
+        mAudioTrackBtn.setOnClickListener(new OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                FastClickCheckUtil.check(view);
+                listener.selectAudioTrack();
+            }
+        });
+        // Button : SKIP time start -----------------------------------------
         mPlayerTimeStartBtn.setOnClickListener(new OnClickListener() {
             @Override
             public void onClick(View view) {
@@ -509,6 +676,7 @@ public class VodController extends BaseController {
                 return true;
             }
         });
+        // Button : SKIP time end -------------------------------------------
         mPlayerTimeSkipBtn.setOnClickListener(new OnClickListener() {
             @Override
             public void onClick(View view) {
@@ -542,6 +710,7 @@ public class VodController extends BaseController {
                 return true;
             }
         });
+        // Button : SKIP time step -----------------------------------------
         mPlayerTimeStepBtn.setOnClickListener(new OnClickListener() {
             @Override
             public void onClick(View view) {
@@ -563,38 +732,11 @@ public class VodController extends BaseController {
                 return true;
             }
         });
-        // takagen99: Add fastforward button
-        mPlayerFFwd.setOnClickListener(new OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                if (mSpeed == 5.0f) {
-                    mSpeed = 1.0f;
-//                    mPlayerFFwd.setCompoundDrawablesWithIntrinsicBounds(dFFwd, null, null, null);
-                    mplayerFFImg.setImageDrawable(dFFwd);
-                } else {
-                    mSpeed = 5.0f;
-//                    mPlayerFFwd.setCompoundDrawablesWithIntrinsicBounds(dPlay, null, null, null);
-                    mplayerFFImg.setImageDrawable(dPlay);
-                }
-                try {
-                    mPlayerConfig.put("sp", mSpeed);
-                    updatePlayerCfgView();
-                    listener.updatePlayerCfg();
-                    mControlWrapper.setSpeed(mSpeed);
-                } catch (JSONException e) {
-                    e.printStackTrace();
-                }
-            }
-        });
-        mAudioTrackBtn.setOnClickListener(new OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                FastClickCheckUtil.check(view);
-                listener.selectAudioTrack();
-//                hideBottom();
-            }
-        });
+    }
 
+    void initSubtitleInfo() {
+        int subtitleTextSize = SubtitleHelper.getTextSize(mActivity);
+        mSubtitleView.setTextSize(subtitleTextSize);
     }
 
     @Override
@@ -652,6 +794,8 @@ public class VodController extends BaseController {
 
         void playPre();
 
+        void prepared();
+
         void changeParse(ParseBean pb);
 
         void updatePlayerCfg();
@@ -659,6 +803,8 @@ public class VodController extends BaseController {
         void replay(boolean replay);
 
         void errReplay();
+
+        void selectSubtitle();
 
         void selectAudioTrack();
     }
@@ -779,6 +925,7 @@ public class VodController extends BaseController {
                 listener.errReplay();
                 break;
             case VideoView.STATE_PREPARED:
+                listener.prepared();
                 // takagen99 : Add Video Resolution
                 if (mControlWrapper.getVideoSize().length >= 2) {
                     mPlayerResolution.setText(mControlWrapper.getVideoSize()[0] + " x " + mControlWrapper.getVideoSize()[1]);
@@ -816,6 +963,17 @@ public class VodController extends BaseController {
         mHandler.removeMessages(1002);
         mHandler.sendEmptyMessage(1003);
         mHandler.removeCallbacks(mHideBottomRunnable);
+    }
+
+    void setPlaySpeed(float value) {
+        try {
+            mPlayerConfig.put("sp", value);
+            updatePlayerCfgView();
+            listener.updatePlayerCfg();
+            mControlWrapper.setSpeed(value);
+        } catch (JSONException err) {
+            err.printStackTrace();
+        }
     }
 
     // takagen99 : Check Pause
@@ -877,17 +1035,51 @@ public class VodController extends BaseController {
         return true;
     }
 
+    // takagen99 : Add long press to fast forward x3 speed
+    private boolean fromLongPress;
+
+    @Override
+    public void onLongPress(MotionEvent e) {
+        if (!isPaused) {
+            fromLongPress = true;
+            circularReveal(mTapSeek, 1);
+            // Set Fast Forward Icon
+            mProgressTop.setVisibility(VISIBLE);
+            mPauseIcon.setImageResource(R.drawable.play_ffwd);
+            // Set x3 Speed
+            mSpeed = 3.0f;
+            setPlaySpeed(mSpeed);
+        }
+    }
+
+    // takagen99 : On release long press, resume x1 speed
+    @Override
+    public boolean onTouchEvent(MotionEvent e) {
+        if (e.getAction() == MotionEvent.ACTION_UP) {
+            if (fromLongPress) {
+                // Set back to Pause Icon
+                mProgressTop.setVisibility(INVISIBLE);
+                mPauseIcon.setImageResource(R.drawable.play_pause);
+                // Set back Speed to x1
+                mSpeed = 1.0f;
+                setPlaySpeed(mSpeed);
+                mplayerFFImg.setImageDrawable(dFFwd);
+                fromLongPress = false;
+            }
+        }
+        return super.onTouchEvent(e);
+    }
+
+    // takagen99 : Added double tap to rewind or fast forward with animation
     @Override
     public boolean onDoubleTap(MotionEvent e) {
-        // check if left or middle or right screen
         int threeScreen = PlayerUtils.getScreenWidth(getContext(), true) / 3;
 
         if (e.getX() > 0 && e.getX() < threeScreen) {
             // left side <<<<<
             tapDirection = -1;
-            // middle
         } else if ((e.getX() > threeScreen) && (e.getX() < (threeScreen * 2))) {
-            // middle
+            // middle screen
             tapDirection = 0;
         } else if (e.getX() > (threeScreen * 2)) {
             // right side >>>>>
@@ -896,6 +1088,7 @@ public class VodController extends BaseController {
         if (tapDirection == 0 || isPaused) {
             togglePlay();
         } else {
+            circularReveal(mTapSeek, tapDirection);
             int duration = (int) mControlWrapper.getDuration();
             int currentPosition = (int) mControlWrapper.getCurrentPosition();
             // Fast Forward or Backward by 10 seconds
@@ -908,6 +1101,42 @@ public class VodController extends BaseController {
         return true;
     }
 
+    @TargetApi(Build.VERSION_CODES.LOLLIPOP)
+    public static void circularReveal(View v, int direction) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+            int radius = Math.max(v.getWidth(), v.getHeight()) / 2;
+            int width = 0;
+            if (direction == 1) {
+                width = v.getWidth();
+            }
+            TransitionManager.beginDelayedTransition((ViewGroup) v);
+            Animator anim = ViewAnimationUtils.createCircularReveal(v, width, v.getHeight() / 2, 0, radius);
+            anim.addListener(new Animator.AnimatorListener() {
+                @Override
+                public void onAnimationStart(Animator animation) {
+                    v.setVisibility(VISIBLE);
+                }
+
+                @Override
+                public void onAnimationEnd(Animator animation) {
+                    v.setVisibility(INVISIBLE);
+                }
+
+                @Override
+                public void onAnimationCancel(Animator animation) {
+
+                }
+
+                @Override
+                public void onAnimationRepeat(Animator animation) {
+
+                }
+            });
+            anim.setDuration(600);
+            anim.start();
+        }
+    }
+
     @Override
     public boolean onBackPressed() {
         if (super.onBackPressed()) {
@@ -916,6 +1145,10 @@ public class VodController extends BaseController {
         if (isBottomVisible()) {
             hideBottom();
             return true;
+        }
+        int checkOrientation = mActivity.getRequestedOrientation();
+        if (checkOrientation == ActivityInfo.SCREEN_ORIENTATION_PORTRAIT || checkOrientation == ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT || checkOrientation == ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT) {
+            mActivity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
         }
         return false;
     }
