@@ -10,11 +10,13 @@ import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.graphics.Paint;
 import android.graphics.drawable.Icon;
 import android.os.Build;
 import android.os.Bundle;
 import android.text.Html;
 import android.text.TextUtils;
+import android.util.Rational;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
@@ -48,6 +50,8 @@ import com.github.tvbox.osc.util.DefaultConfig;
 import com.github.tvbox.osc.util.FastClickCheckUtil;
 import com.github.tvbox.osc.util.HawkConfig;
 import com.github.tvbox.osc.util.MD5;
+import com.github.tvbox.osc.util.SearchHelper;
+import com.github.tvbox.osc.util.SubtitleHelper;
 import com.github.tvbox.osc.viewmodel.SourceViewModel;
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
@@ -72,6 +76,7 @@ import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.net.URLEncoder;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -115,6 +120,8 @@ public class DetailActivity extends BaseActivity {
     public String sourceKey;
     boolean seriesSelect = false;
     private View seriesFlagFocus = null;
+    private HashMap<String, String> mCheckSources = null;
+    private V7GridLayoutManager mGridViewLayoutMgr = null;
 
     private BroadcastReceiver pipActionReceiver;
     private static final int PIP_BOARDCAST_ACTION_PREV = 0;
@@ -160,8 +167,10 @@ public class DetailActivity extends BaseActivity {
         tvPlayUrl = findViewById(R.id.tvPlayUrl);
         mEmptyPlayList = findViewById(R.id.mEmptyPlaylist);
         mGridView = findViewById(R.id.mGridView);
-        mGridView.setHasFixedSize(true);
-        mGridView.setLayoutManager(new V7GridLayoutManager(this.mContext, isBaseOnWidth() ? 6 : 7));
+        mGridView.setHasFixedSize(false);
+        mGridViewLayoutMgr = new V7GridLayoutManager(this.mContext, 6);
+        mGridView.setLayoutManager(mGridViewLayoutMgr);
+//        mGridView.setLayoutManager(new V7GridLayoutManager(this.mContext, isBaseOnWidth() ? 6 : 7));
         seriesAdapter = new SeriesAdapter();
         mGridView.setAdapter(seriesAdapter);
         mGridViewFlag = findViewById(R.id.mGridViewFlag);
@@ -174,8 +183,11 @@ public class DetailActivity extends BaseActivity {
             getSupportFragmentManager().beginTransaction().add(R.id.previewPlayer, playFragment).commit();
             getSupportFragmentManager().beginTransaction().show(playFragment).commitAllowingStateLoss();
             tvPlay.setText(getString(R.string.det_expand));
+            tvPlay.setVisibility(View.GONE);
+        } else {
+            tvPlay.setVisibility(View.VISIBLE);
+            tvPlay.requestFocus();
         }
-        tvPlay.requestFocus();
         tvSort.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -416,6 +428,24 @@ public class DetailActivity extends BaseActivity {
                 vodInfo.seriesMap.get(vodInfo.playFlag).get(vodInfo.playIndex).selected = true;
         }
 
+        // Dynamic series list width
+        Paint pFont = new Paint();
+        List<VodInfo.VodSeries> list = vodInfo.seriesMap.get(vodInfo.playFlag);
+        int listSize = list.size();
+        int w = 1;
+        for (int i = 0; i < listSize; ++i) {
+            String name = list.get(i).name;
+            if (w < (int) pFont.measureText(name)) {
+                w = (int) pFont.measureText(name);
+            }
+        }
+        w += 32;
+        int screenWidth = getWindowManager().getDefaultDisplay().getWidth() / 3;
+        int offset = screenWidth / w;
+        if (offset <= 2) offset = 2;
+        if (offset > 6) offset = 6;
+        mGridViewLayoutMgr.setSpanCount(offset);
+
         seriesAdapter.setNewData(vodInfo.seriesMap.get(vodInfo.playFlag));
         mGridView.postDelayed(new Runnable() {
             @Override
@@ -478,7 +508,7 @@ public class DetailActivity extends BaseActivity {
                     if (vodInfo.seriesMap != null && vodInfo.seriesMap.size() > 0) {
                         mGridViewFlag.setVisibility(View.VISIBLE);
                         mGridView.setVisibility(View.VISIBLE);
-                        tvPlay.setVisibility(View.VISIBLE);
+//                        tvPlay.setVisibility(View.VISIBLE);
                         mEmptyPlayList.setVisibility(View.GONE);
 
                         VodInfo vodInfoRecord = RoomDataManger.getVodInfo(sourceKey, vodId);
@@ -520,6 +550,8 @@ public class DetailActivity extends BaseActivity {
                             jumpToPlay();
                             llPlayerFragmentContainer.setVisibility(View.VISIBLE);
                             llPlayerFragmentContainerBlock.setVisibility(View.VISIBLE);
+                            llPlayerFragmentContainerBlock.requestFocus();
+                            toggleSubtitleTextSize();
                         }
                         // startQuickSearch();
                     } else {
@@ -626,7 +658,12 @@ public class DetailActivity extends BaseActivity {
         searchResult();
     }
 
+    private void initCheckedSourcesForSearch() {
+        mCheckSources = SearchHelper.getSourcesForSearch();
+    }
+
     private void startQuickSearch() {
+        initCheckedSourcesForSearch();
         if (hadQuickStart)
             return;
         hadQuickStart = true;
@@ -693,6 +730,9 @@ public class DetailActivity extends BaseActivity {
             if (!bean.isSearchable() || !bean.isQuickSearch()) {
                 continue;
             }
+            if (mCheckSources != null && !mCheckSources.containsKey(bean.getKey())) {
+                continue;
+            }
             siteKey.add(bean.getKey());
         }
         for (String key : siteKey) {
@@ -746,23 +786,38 @@ public class DetailActivity extends BaseActivity {
         EventBus.getDefault().unregister(this);
     }
 
-    boolean PIP = Hawk.get(HawkConfig.PIC_IN_PIC, false);
+    boolean PiPON = Hawk.get(HawkConfig.PIC_IN_PIC, false);
 
     @Override
     public void onUserLeaveHint() {
         // takagen99 : Additional check for external player
-        if (supportsPiPMode() && showPreview && !playFragment.extPlay && PIP) {
+        if (supportsPiPMode() && showPreview && !playFragment.extPlay && PiPON) {
+            // Calculate Video Resolution
+            int vWidth = playFragment.mVideoView.getVideoSize()[0];
+            int vHeight = playFragment.mVideoView.getVideoSize()[1];
+            Rational ratio = null;
+            if (vWidth != 0) {
+                if ((((double) vWidth) / ((double) vHeight)) > 2.39) {
+                    vHeight = (int) (((double) vWidth) / 2.35);
+                }
+                ratio = new Rational(vWidth, vHeight);
+            } else {
+                ratio = new Rational(16, 9);
+            }
             List<RemoteAction> actions = new ArrayList<>();
             actions.add(generateRemoteAction(android.R.drawable.ic_media_previous, PIP_BOARDCAST_ACTION_PREV, "Prev", "Play Previous"));
             actions.add(generateRemoteAction(android.R.drawable.ic_media_play, PIP_BOARDCAST_ACTION_PLAYPAUSE, "Play", "Play/Pause"));
             actions.add(generateRemoteAction(android.R.drawable.ic_media_next, PIP_BOARDCAST_ACTION_NEXT, "Next", "Play Next"));
-            PictureInPictureParams params = new PictureInPictureParams.Builder().setActions(actions).build();
+            PictureInPictureParams params = new PictureInPictureParams.Builder()
+                    .setAspectRatio(ratio)
+                    .setActions(actions).build();
             if (!fullWindows) {
                 toggleFullPreview();
             }
             enterPictureInPictureMode(params);
             playFragment.getVodController().hideBottom();
         }
+        super.onUserLeaveHint();
     }
 
     @RequiresApi(api = Build.VERSION_CODES.O)
@@ -795,7 +850,7 @@ public class DetailActivity extends BaseActivity {
                     } else if (currentStatus == PIP_BOARDCAST_ACTION_PLAYPAUSE) {
                         playFragment.getVodController().togglePlay();
                     } else if (currentStatus == PIP_BOARDCAST_ACTION_NEXT) {
-                        playFragment.playNext();
+                        playFragment.playNext(false);
                     }
                 }
             };
@@ -815,8 +870,7 @@ public class DetailActivity extends BaseActivity {
             toggleFullPreview();
             mGridView.requestFocus();
             return;
-        }
-        if (seriesSelect) {
+        } else if (seriesSelect) {
             if (seriesFlagFocus != null && !seriesFlagFocus.isFocused()) {
                 seriesFlagFocus.requestFocus();
                 return;
@@ -851,11 +905,11 @@ public class DetailActivity extends BaseActivity {
     // preview : true 开启 false 关闭
     VodInfo previewVodInfo = null;
     boolean showPreview = Hawk.get(HawkConfig.SHOW_PREVIEW, true);
-    boolean fullWindows = false;
+    public boolean fullWindows = false;
     ViewGroup.LayoutParams windowsPreview = null;
     ViewGroup.LayoutParams windowsFull = null;
 
-    void toggleFullPreview() {
+    public void toggleFullPreview() {
         if (windowsPreview == null) {
             windowsPreview = llPlayerFragmentContainer.getLayoutParams();
         }
@@ -875,21 +929,21 @@ public class DetailActivity extends BaseActivity {
         tvSort.setFocusable(!fullWindows);
         tvCollect.setFocusable(!fullWindows);
         tvQuickSearch.setFocusable(!fullWindows);
+        toggleSubtitleTextSize();
 
         // Hide navbar only when video playing on full window, else show navbar
         if (fullWindows) {
-            vidHideSysBar();
+            hideSystemUI(false);
         } else {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
-                int uiOptions = getWindow().getDecorView().getSystemUiVisibility();
-                uiOptions &= ~View.SYSTEM_UI_FLAG_LAYOUT_STABLE;
-                uiOptions &= ~View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION;
-                uiOptions &= ~View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN;
-                uiOptions &= ~View.SYSTEM_UI_FLAG_HIDE_NAVIGATION;
-                uiOptions &= ~View.SYSTEM_UI_FLAG_FULLSCREEN;
-                uiOptions &= ~View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY;
-                getWindow().getDecorView().setSystemUiVisibility(uiOptions);
-            }
+            showSystemUI();
         }
+    }
+
+    void toggleSubtitleTextSize() {
+        int subtitleTextSize = SubtitleHelper.getTextSize(this);
+        if (!fullWindows) {
+            subtitleTextSize *= 0.5;
+        }
+        EventBus.getDefault().post(new RefreshEvent(RefreshEvent.TYPE_SUBTITLE_SIZE_CHANGE, subtitleTextSize));
     }
 }
