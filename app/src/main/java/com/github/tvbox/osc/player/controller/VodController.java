@@ -34,6 +34,7 @@ import com.github.tvbox.osc.api.ApiConfig;
 import com.github.tvbox.osc.base.BaseActivity;
 import com.github.tvbox.osc.bean.IJKCode;
 import com.github.tvbox.osc.bean.ParseBean;
+import com.github.tvbox.osc.event.RefreshEvent;
 import com.github.tvbox.osc.player.thirdparty.Kodi;
 import com.github.tvbox.osc.player.thirdparty.MXPlayer;
 import com.github.tvbox.osc.player.thirdparty.ReexPlayer;
@@ -50,7 +51,7 @@ import com.github.tvbox.osc.util.SubtitleHelper;
 import com.orhanobut.hawk.Hawk;
 import com.owen.tvrecyclerview.widget.TvRecyclerView;
 import com.owen.tvrecyclerview.widget.V7LinearLayoutManager;
-
+import org.greenrobot.eventbus.EventBus;
 import org.jetbrains.annotations.NotNull;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -233,7 +234,7 @@ public class VodController extends BaseController {
     LinearLayout mSpeedll;
 
     // pause container
-    FrameLayout mProgressTop;
+    public static FrameLayout mProgressTop;
     ImageView mPauseIcon;
     LinearLayout mTapSeek;
 
@@ -308,6 +309,12 @@ public class VodController extends BaseController {
             mBottomRoot.requestLayout();
         }
     };
+
+    @Override
+    protected void onDetachedFromWindow() {
+        super.onDetachedFromWindow();
+        mHandler.removeCallbacks(mTimeRunnable);
+    }
 
     @Override
     protected void initView() {
@@ -617,6 +624,7 @@ public class VodController extends BaseController {
                     players.add(0);  // System
                     players.add(1);  // IJK
                     players.add(2);  // Exo
+                    players.add(3);  // Ali
                     if (mxPlayerExist) {
                         players.add(10);
                     }
@@ -831,6 +839,7 @@ public class VodController extends BaseController {
                     mTopRoot.setVisibility(GONE);
                     mBottomRoot.setVisibility(GONE);
                     mBack.setVisibility(GONE);
+                    mProgressTop.setVisibility(GONE);
                     mHandler.removeCallbacks(mHideBottomRunnable);
                     ((DetailActivity) mActivity).toggleFullPreview();
                 } else {
@@ -870,15 +879,7 @@ public class VodController extends BaseController {
 
     void updatePlayerCfgView() {
         try {
-            int playerType = mPlayerConfig.getInt("pl");
-            // takagen99: Only display loading speed when IJK
-            if (playerType == 1) {
-                mSpeedHidell.setVisibility(VISIBLE);
-                mSpeedll.setVisibility(VISIBLE);
-            } else {
-                mSpeedHidell.setVisibility(GONE);
-                mSpeedll.setVisibility(GONE);
-            }
+            int playerType = mPlayerConfig.getInt("pl");            
             mPlayerTxt.setText(PlayerHelper.getPlayerName(playerType));
             mPlayerScaleTxt.setText(PlayerHelper.getScaleName(mPlayerConfig.getInt("sc")));
             mPlayerIJKBtn.setText(mPlayerConfig.getString("ijk"));
@@ -961,9 +962,9 @@ public class VodController extends BaseController {
         Date afterAdd = new Date(t + TimeRemaining);
         SimpleDateFormat timeEnd = new SimpleDateFormat("hh:mm aa", Locale.ENGLISH);
         if (isPaused) {
-            mTimeEnd.setText("Remaining Time " + PlayerUtils.stringForTime((int) TimeRemaining) + " | Ends at " + timeEnd.format(afterAdd));
+            mTimeEnd.setText(getContext().getString(R.string.vod_remaining_time) + " " + PlayerUtils.stringForTime((int) TimeRemaining) + " | " + getContext().getString(R.string.vod_ends_at) + " " + timeEnd.format(afterAdd));
         } else {
-            mTimeEnd.setText("Ends at " + timeEnd.format(afterAdd));
+            mTimeEnd.setText(getContext().getString(R.string.vod_ends_at) + " " + timeEnd.format(afterAdd));
         }
         mCurrentTime.setText(PlayerUtils.stringForTimeVod(position));
         mTotalTime.setText(PlayerUtils.stringForTimeVod(duration));
@@ -1054,6 +1055,7 @@ public class VodController extends BaseController {
     @Override
     protected void onPlayStateChanged(int playState) {
         super.onPlayStateChanged(playState);
+        EventBus.getDefault().post(new RefreshEvent(RefreshEvent.TYPE_REFRESH_NOTIFY, null));
         switch (playState) {
             case VideoView.STATE_IDLE:
                 break;
@@ -1331,7 +1333,7 @@ public class VodController extends BaseController {
         if (e.getAction() == MotionEvent.ACTION_UP) {
             if (fromLongPress) {
                 // Set back to Pause Icon
-                mProgressTop.setVisibility(INVISIBLE);
+                mProgressTop.setVisibility(GONE);
                 mPauseIcon.setImageResource(R.drawable.play_pause);
                 // Set back to current speed
                 mSpeed = currentSpeed;
@@ -1391,7 +1393,7 @@ public class VodController extends BaseController {
 
                 @Override
                 public void onAnimationEnd(Animator animation) {
-                    v.setVisibility(INVISIBLE);
+                    v.setVisibility(GONE);
                 }
 
                 @Override

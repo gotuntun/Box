@@ -23,6 +23,9 @@ import android.widget.Toast;
 import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.RecyclerView;
 
+import com.bumptech.glide.Glide;
+import com.bumptech.glide.load.engine.DiskCacheStrategy;
+import com.bumptech.glide.request.RequestOptions;
 import com.chad.library.adapter.base.BaseQuickAdapter;
 import com.github.tvbox.osc.R;
 import com.github.tvbox.osc.api.ApiConfig;
@@ -50,16 +53,14 @@ import com.github.tvbox.osc.util.EpgUtil;
 import com.github.tvbox.osc.util.FastClickCheckUtil;
 import com.github.tvbox.osc.util.HawkConfig;
 import com.github.tvbox.osc.util.live.TxtSubscribe;
-import com.github.tvbox.osc.util.urlhttp.CallBackUtil;
-import com.github.tvbox.osc.util.urlhttp.UrlHttpUtil;
 import com.google.gson.JsonArray;
 import com.lzy.okgo.OkGo;
 import com.lzy.okgo.callback.AbsCallback;
+import com.lzy.okgo.callback.StringCallback;
 import com.lzy.okgo.model.Response;
 import com.orhanobut.hawk.Hawk;
 import com.owen.tvrecyclerview.widget.TvRecyclerView;
 import com.owen.tvrecyclerview.widget.V7LinearLayoutManager;
-import com.squareup.picasso.Picasso;
 
 import org.apache.commons.lang3.StringUtils;
 import org.greenrobot.eventbus.EventBus;
@@ -178,7 +179,7 @@ public class LivePlayActivity extends BaseActivity {
         // Getting EPG Address
         epgStringAddress = Hawk.get(HawkConfig.EPG_URL, "");
         if (StringUtils.isBlank(epgStringAddress)) {
-            epgStringAddress = "http://epg.51zmt.top:8000/api/diyp/";
+            epgStringAddress = "https://epg.112114.xyz/";
 //            Hawk.put(HawkConfig.EPG_URL, epgStringAddress);
         }
         // http://epg.aishangtv.top/live_proxy_epg_bc.php
@@ -720,8 +721,14 @@ public class LivePlayActivity extends BaseActivity {
 
     // Get Channel Logo
     private void getTvLogo(String channelName, String logoUrl) {
-//        Toast.makeText(App.getInstance(), logoUrl, Toast.LENGTH_SHORT).show();
-        Picasso.get().load(logoUrl).placeholder(R.drawable.img_logo_placeholder).into(tv_logo);
+        // takagen99 : Use Glide instead
+        RequestOptions options = new RequestOptions();
+        options.diskCacheStrategy(DiskCacheStrategy.AUTOMATIC)
+                .placeholder(R.drawable.img_logo_placeholder);
+        Glide.with(tv_logo)
+                .load(logoUrl)
+                .apply(options)
+                .into(tv_logo);
     }
 
     public void getEpg(Date date) {
@@ -743,14 +750,9 @@ public class LivePlayActivity extends BaseActivity {
         } else {
             epgUrl = epgStringAddress + "?ch=" + URLEncoder.encode(epgTagName) + "&date=" + timeFormat.format(date);
         }
-        UrlHttpUtil.get(epgUrl, new CallBackUtil.CallBackString() {
-            public void onFailure(int i, String str) {
-                showEpg(date, new ArrayList());
-//                showBottomEpg();
-            }
-
-            public void onResponse(String paramString) {
-
+        OkGo.<String>get(epgUrl).execute(new StringCallback() {
+            public void onSuccess(Response<String> response) {
+                String paramString = response.body();
                 ArrayList arrayList = new ArrayList();
 
                 try {
@@ -774,6 +776,11 @@ public class LivePlayActivity extends BaseActivity {
                     hsEpg.put(savedEpgKey, arrayList);
                 showBottomEpg();
             }
+
+            public void onFailure(int i, String str) {
+                showEpg(date, new ArrayList());
+                showBottomEpg();
+            }
         });
     }
 
@@ -784,6 +791,7 @@ public class LivePlayActivity extends BaseActivity {
             showChannelInfo();
             return true;
         }
+        if (mVideoView == null) return true;
         mVideoView.release();
         if (!changeSource) {
             currentChannelGroupIndex = channelGroupIndex;
@@ -820,6 +828,13 @@ public class LivePlayActivity extends BaseActivity {
         playChannel(groupChannelIndex[0], groupChannelIndex[1], false);
     }
 
+    public void playCurrent() {
+        if (!isCurrentLiveChannelValid()) {
+            return;
+        }
+        playChannel(currentChannelGroupIndex, currentLiveChannelIndex, true);
+    }
+
     private void playPrevious() {
         if (!isCurrentLiveChannelValid()) return;
         Integer[] groupChannelIndex = getNextChannel(-1);
@@ -833,6 +848,9 @@ public class LivePlayActivity extends BaseActivity {
     }
 
     public void playNextSource() {
+        if (mVideoView == null) {
+            return;
+        }
         if (!isCurrentLiveChannelValid()) return;
         currentLiveChannelItem.nextSource();
         playChannel(currentChannelGroupIndex, currentLiveChannelIndex, true);
@@ -929,6 +947,7 @@ public class LivePlayActivity extends BaseActivity {
                 }
                 return true;
             }
+
             @Override
             public void longPress() {
                 showSettingGroup();
@@ -963,16 +982,24 @@ public class LivePlayActivity extends BaseActivity {
                     case VideoView.STATE_PLAYING:
                         currentLiveChangeSourceTimes = 0;
                         mHandler.removeCallbacks(mConnectTimeoutChangeSourceRun);
+                        mHandler.removeCallbacks(mConnectTimeoutReplayRun);
                         break;
                     case VideoView.STATE_ERROR:
                     case VideoView.STATE_PLAYBACK_COMPLETED:
                         mHandler.removeCallbacks(mConnectTimeoutChangeSourceRun);
+                        mHandler.removeCallbacks(mConnectTimeoutReplayRun);
                         mHandler.post(mConnectTimeoutChangeSourceRun);
                         break;
                     case VideoView.STATE_PREPARING:
                     case VideoView.STATE_BUFFERING:
                         mHandler.removeCallbacks(mConnectTimeoutChangeSourceRun);
-                        mHandler.postDelayed(mConnectTimeoutChangeSourceRun, (Hawk.get(HawkConfig.LIVE_CONNECT_TIMEOUT, 1) + 1) * 5000L);
+                        mHandler.removeCallbacks(mConnectTimeoutReplayRun);
+                        if(Hawk.get(HawkConfig.LIVE_CONNECT_TIMEOUT, 2) == 0 ){
+                            //缓冲30s重新播放
+                            mHandler.postDelayed(mConnectTimeoutReplayRun, 30 * 1000L);
+                        }else{
+                            mHandler.postDelayed(mConnectTimeoutChangeSourceRun, (Hawk.get(HawkConfig.LIVE_CONNECT_TIMEOUT, 2)) * 5000L);
+                        }
                         break;
                 }
             }
@@ -1004,6 +1031,13 @@ public class LivePlayActivity extends BaseActivity {
             } else {
                 playNextSource();
             }
+        }
+    };
+
+    private final Runnable mConnectTimeoutReplayRun = new Runnable() {
+        @Override
+        public void run() {
+            playCurrent();
         }
     };
 
@@ -1698,7 +1732,7 @@ public class LivePlayActivity extends BaseActivity {
         ArrayList<String> sourceItems = new ArrayList<>();
         ArrayList<String> scaleItems = new ArrayList<>(Arrays.asList("默认", "16:9", "4:3", "填充", "原始", "裁剪"));
         ArrayList<String> playerDecoderItems = new ArrayList<>(Arrays.asList("系统", "ijk硬解", "ijk软解", "exo"));
-        ArrayList<String> timeoutItems = new ArrayList<>(Arrays.asList("5s", "10s", "15s", "20s", "25s", "30s"));
+        ArrayList<String> timeoutItems = new ArrayList<>(Arrays.asList("关", "5s", "10s", "15s", "20s", "25s", "30s"));
         ArrayList<String> personalSettingItems = new ArrayList<>(Arrays.asList("显示时间", "显示网速", "换台反转", "跨选分类", "关闭密码"));
         ArrayList<String> liveAdd = new ArrayList<>(Arrays.asList("列表历史"));
         ArrayList<String> exitConfirm = new ArrayList<>(Arrays.asList("确定"));

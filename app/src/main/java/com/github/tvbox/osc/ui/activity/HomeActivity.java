@@ -187,9 +187,12 @@ public class HomeActivity extends BaseActivity {
                     textView.invalidate();
 //                    if (!sortAdapter.getItem(position).filters.isEmpty())
 //                        view.findViewById(R.id.tvFilter).setVisibility(View.VISIBLE);
-
+                    if (position == -1) {
+                        position = 0;
+                        HomeActivity.this.mGridView.setSelection(0);
+                    }
                     MovieSort.SortData sortData = sortAdapter.getItem(position);
-                    if (!sortData.filters.isEmpty()) {
+                    if (null != sortData && !sortData.filters.isEmpty()) {
                         showFilterIcon(sortData.filterSelectCount());
                     }
                     HomeActivity.this.sortFocusView = view;
@@ -236,7 +239,9 @@ public class HomeActivity extends BaseActivity {
 //                dataInitOk = false;
 //                jarInitOk = true;
 //                showSiteSwitch();
-                File dir = mContext.getCacheDir();
+                File dir = getCacheDir();
+                FileUtils.recursiveDelete(dir);
+                dir = getExternalCacheDir();
                 FileUtils.recursiveDelete(dir);
                 Toast.makeText(HomeActivity.this, getString(R.string.hm_cache_del), Toast.LENGTH_SHORT).show();
             }
@@ -396,8 +401,12 @@ public class HomeActivity extends BaseActivity {
                         mHandler.postDelayed(new Runnable() {
                             @Override
                             public void run() {
-                                if (!useCacheConfig)
+                                if (!useCacheConfig) {
+                                    if (Hawk.get(HawkConfig.HOME_DEFAULT_SHOW, false)) {
+                                        jumpActivity(LivePlayActivity.class);
+                                   }
                                     Toast.makeText(HomeActivity.this, getString(R.string.hm_ok), Toast.LENGTH_SHORT).show();
+                                }
                                 initData();
                             }
                         }, 50);
@@ -414,7 +423,10 @@ public class HomeActivity extends BaseActivity {
                         mHandler.post(new Runnable() {
                             @Override
                             public void run() {
-                                Toast.makeText(HomeActivity.this, getString(R.string.hm_notok), Toast.LENGTH_SHORT).show();
+                                if ("".equals(msg))
+                                    Toast.makeText(HomeActivity.this, getString(R.string.hm_notok), Toast.LENGTH_SHORT).show();
+                                else
+                                    Toast.makeText(HomeActivity.this, msg, Toast.LENGTH_SHORT).show();
                                 initData();
                             }
                         });
@@ -568,6 +580,9 @@ public class HomeActivity extends BaseActivity {
                 } else {
                     exit();
                 }
+            } else if (baseLazyFragment instanceof UserFragment && UserFragment.tvHotListForGrid.canScrollVertically(-1)) {
+                UserFragment.tvHotListForGrid.scrollToPosition(0);
+                this.mGridView.setSelection(0);
             } else {
                 exit();
             }
@@ -643,7 +658,7 @@ public class HomeActivity extends BaseActivity {
         boolean activated = count > 0;
         currentView.findViewById(R.id.tvFilter).setVisibility(View.VISIBLE);
         ImageView imgView = currentView.findViewById(R.id.tvFilter);
-        imgView.setColorFilter(activated?this.getThemeColor(): Color.WHITE);
+        imgView.setColorFilter(activated ? this.getThemeColor() : Color.WHITE);
     }
 
     private final Runnable mDataRunnable = new Runnable() {
@@ -754,7 +769,10 @@ public class HomeActivity extends BaseActivity {
 
     // Site Switch on Home Button
     void showSiteSwitch() {
-        List<SourceBean> sites = ApiConfig.get().getSourceBeanList();
+        List<SourceBean> sites = new ArrayList<>();
+        for (SourceBean sb : ApiConfig.get().getSourceBeanList()) {
+            if (sb.getHide() == 0) sites.add(sb);
+        }
         if (sites.size() > 0) {
             SelectDialog<SourceBean> dialog = new SelectDialog<>(HomeActivity.this);
 
